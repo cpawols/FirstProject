@@ -37,10 +37,17 @@ merged_table[1:5, 16110:16117]
 
 colnames(merged_table) <- gsub("\\?\\|","G", colnames(merged_table))
 colnames(merged_table) <- paste("G", colnames(merged_table), sep="")
+colnames(merged_table) <- gsub("\\-","", colnames(merged_table))
+colnames(merged_table) <- gsub("\\,","", colnames(merged_table))
+colnames(merged_table) <- gsub(" ","", colnames(merged_table))
+
+
 merged_table[1:5, 1:5]
 merged_table[1:5, 16110:16117]
 dim(merged_table)
 merged_table[,"GX_cohort"] <- as.factor(merged_table[,"GX_cohort"])
+
+
 form <- paste(colnames(merged_table)[16110],"GX_cohort", sep="~")
 r <- aov(as.formula(form), data=merged_table)
 
@@ -88,6 +95,34 @@ p_values <- unlist(lapply(c(2:(ncol(merged_table)-1)), function(i) {
   aov(as.formula(paste(colnames(merged_table)[i],"GX_cohort", sep="~")), data=merged_table)
 }
 ))
+
+
+p_values <- lapply(2:(ncol(merged_table)-1), function(i) {
+  aov(as.formula(paste(colnames(merged_table)[i],"GX_cohort", sep="~")), data=merged_table)
+}
+)
+
+###############################liczenie p-warto########################################
+formulas <- lapply(2:(ncol(merged_table)-1), function(i) {
+  as.formula(paste(colnames(merged_table)[i],"GGX_cohort", sep="~"))
+}
+)
+
+p_values <- unlist(lapply(formulas, function(i) {
+  summary(aov(i, data=merged_table))[[1]][["Pr(>F)"]][1]
+}
+))
+
+#########################################################################################
+pairwise.t.test("GGG10431", "GGX_cohort", data=merged_table, na.omit=T)
+
+
+
+
+
+#########################################################################################
+
+summary(aov(formulas[[2]], data=merged_table))[[1]][["Pr(>F)"]][1]
 
 p_values <- unlist(lapply(2:(ncol(merged_table)-1), function(i) {
   aov(as.formula(paste(colnames(merged_table)[i],"GX_cohort", sep="~")), data=merged_table)
