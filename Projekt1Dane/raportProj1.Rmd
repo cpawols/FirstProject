@@ -1,0 +1,146 @@
+---
+title: "Projekt1"
+author: "Frej,Olszewski,Piotrowski,Rutkowski"
+date: "22 października 2015"
+output: html_document
+---
+
+Etap 1: wczytanie i obrobka danych, chcemy otrzymać złączoną tabelę z 
+poszczególnymi genami i rodzajami raka.
+```{r,message=FALSE,warning=FALSE}
+load("expression.cb1.rda")
+load("expression.cb2.rda")
+load("clinical.cb.rda")
+```
+
+Łączymy kolumny i zamieniamy nazwy kolumn, by były te same w obu tabelach.
+```{r,message=FALSE,warning=FALSE}
+expression <- rbind(expression.cb1, expression.cb2)
+clinical.cb[,1] <- gsub("\\-", "\\.", clinical.cb[,1])
+
+expression_tmp <- t(expression[,-1])
+expression_tmp <- as.data.frame(expression_tmp)
+colnames(expression_tmp) <- expression[,1]
+expression_tmp <- cbind(rownames(expression_tmp), expression_tmp)
+
+colnames(expression_tmp)[1] <- "PatientID"
+colnames(clinical.cb)[1] <- "PatientID"
+```
+
+Robimy "JOIN" tabel względem ID pacjenta
+```{r,message=FALSE,warning=FALSE}
+merged_table <- merge(expression_tmp, clinical.cb[,c("PatientID", "X_cohort")], by="PatientID")
+```
+
+Czyścimy nazwy kolumn, by nie było błędów
+```{r,message=FALSE,warning=FALSE}
+colnames(merged_table) <- gsub("\\?\\|","G", colnames(merged_table))
+colnames(merged_table) <- paste("G", colnames(merged_table), sep="")
+colnames(merged_table) <- gsub("\\-","", colnames(merged_table))
+colnames(merged_table) <- gsub("\\,","", colnames(merged_table))
+colnames(merged_table) <- gsub(" ","", colnames(merged_table))
+
+merged_table[,"GX_cohort"] <- as.factor(merged_table[,"GX_cohort"])
+```
+
+Etap 2: teraz dla otrzymanej tabeli wykonujemy jednokierunkową analizę wariancji
+zobaczyć, które geny rozróżniają grupy rakowe
+```{r, message=FALSE,warning=FALSE}
+formulas <- lapply(2:(ncol(merged_table)-1), function(i) {
+  as.formula(paste(colnames(merged_table)[i],"GX_cohort", sep="~"))
+}
+)
+
+#p_values <- unlist(lapply(formulas, function(i) {
+#  summary(aov(i, data=merged_table))[[1]][["Pr(>F)"]][1]
+#}))
+
+load("p_values.Rdata")
+```
+Zobaczmy jakie dostalismy p-wartosci
+```{r}
+p_values_sorted_decr <- sort(p_values, decreasing = TRUE)
+p_values_sorted_incr <- sort(p_values, decreasing = FALSE)
+
+quantile(p_values,probs=(1:10)/10)
+hist(p_values_sorted_decr[1:100])
+head(p_values_sorted_decr,100)
+head(p_values_sorted_incr,100)
+length(which(p_values==0))
+```
+Widzimy, że dużo p-wartości jest bardzo małych, a ok połowa wychodzi poza zakres zmiennej.
+Zobaczmy czy założenia ANOVY są spełnione
+```{r}
+equal_dev_fligner <- readRDS("fligner_p_value.rds")
+#start <- proc.time()
+#N <- length(formulas)
+#equal_dev_fligner <- sapply(1:N, function(j){
+#  fligner.test(formulas[[j]],data=merged_table)$p.value
+#})
+#proc.time()-start
+#saveRDS(equal_dev_fligner,"fligner_p_value.rds")
+#equal_dev_fligner <- readRDS("fligner_p_value.rds")
+
+gen_equal_dev <- which(equal_dev_fligner>0.01)
+length(gen_equal_dev) # tylko 93!
+```
+Widzimy, że tylko 93 geny przeszły test Flignera na poziomie istiotności 0.01!
+Zobaczmy jak wypadnie test Shapiro-Wilka normalności reszt
+```{r}
+#start <- proc.time()
+#N <- length(formulas)
+#shapiro_p_value <- sapply(1:N, function(j){
+#  shapiro.test(lm(formulas[[j]],data=merged_table)$residuals)$p.value
+#})
+#proc.time()-start
+
+shapiro_p_value <-readRDS("shapiro_p_value.rds")
+```
+
+Przeprowadzamy dokładniejszą analizę dla genów, które przeszły testy
+```{r}
+sum(equal_dev_fligner>0.01)
+sum(shapiro_p_value>0.01)
+
+gens_model <-(equal_dev_fligner>0.01)  & (shapiro_p_value>0.01)
+
+gens_id <- which(gens_model)
+
+par(mar=c(5.1,4.1,1.1,2.1))
+par(mfrow=c(1,1))
+
+for(j in 1:length(gens_id)){
+  boxplot(formulas[[gens_id[j]]], data=merged_table,las=2)
+  abline(h=0, col='grey', lwd=2)
+}
+
+#as.formula(colnames(merged_table)[gen_equal_dev[j]+1])
+PPV <- lapply(1:length(gens_id),function(j){
+  pairwise.t.test(merged_table[,gens_id[j]],merged_table$'GX_cohort')
+})
+
+
+plot(p_values[gens_id],xlab="gens_id",ylab="p_value")
+```
+Widzimy, że są tylko 4 geny spełniające założenia modelu, dla każdego z nich
+możemy zaobserwować wyraźną różnicę między średnimi dla różnych rodzajów raka
+
+Etap 3: widzimy, że nie możemy zastosować ANOVY dla wszystkich genów, wykonamy więc
+nieparametryczny test Kruskala, dla którego nie potrzebujemy tak mocnych założeń
+```{r}
+#start <- proc.time()
+#N <- length(formulas)
+#kruskal_p_value <- sapply(1:N, function(j){
+#  kruskal.test(formulas[[j]],data=merged_table)$p.value
+#})
+#proc.time()-start
+
+
+kruskal_p_value <- readRDS("kruskal_p_value.rds")
+sum(kruskal_p_value>0.001)
+head(sort(kruskal_p_value[gen_equal_dev],decreasing=T),10)
+```
+
+Widzimy, że dla nieparametrycznego testu Kruskala wyniki wyszły podobne jak w przypadku ANOVY.
+Możemy więc stwierdzić, że faktycznie w większości 
+
